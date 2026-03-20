@@ -72,8 +72,6 @@ struct DebugBox {
     bool        active;
 };
 
-CArrayObj       DebugBoxes; // Array of DebugBox objects (using a helper or managed manually)
-
 // Since MQL5 handles objects by name, we'll use naming conventions for debug boxes.
 int             DebugBoxCount = 0;
 
@@ -311,7 +309,7 @@ void CheckForceClose()
         if(PositionGetSymbol(i) == _Symbol && PositionGetInteger(POSITION_MAGIC) == InpMagicNum) {
             datetime entry_t = (datetime)PositionGetInteger(POSITION_TIME);
             if(TimeCurrent() - entry_t >= InpOvertimeHrs * 3600) {
-                Trade.PositionClose(PositionGetTicket(i), "Force Closed - Overtime");
+                Trade.PositionClose(PositionGetTicket(i));
             }
         }
     }
