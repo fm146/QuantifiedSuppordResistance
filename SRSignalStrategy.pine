@@ -16,11 +16,11 @@ sig_tol      = input.float(0.5, "Signal Touch Tolerance (Ticks)", minval=0.0, gr
 // MANUAL SR LEVEL SETTINGS
 // ─────────────────────────────────────────────
 groupSR = "Manual Support / Resistance Levels"
-l1_on = input.bool(true, "L1 On", group=groupSR), l1 = input.float(0.0, "L1 Price", group=groupSR)
-l2_on = input.bool(true, "L2 On", group=groupSR), l2 = input.float(0.0, "L2 Price", group=groupSR)
-l3_on = input.bool(true, "L3 On", group=groupSR), l3 = input.float(0.0, "L3 Price", group=groupSR)
-l4_on = input.bool(true, "L4 On", group=groupSR), l4 = input.float(0.0, "L4 Price", group=groupSR)
-l5_on = input.bool(true, "L5 On", group=groupSR), l5 = input.float(0.0, "L5 Price", group=groupSR)
+l1_on = input.bool(false, "L1 On", group=groupSR), l1 = input.float(0.0, "L1 Price", group=groupSR)
+l2_on = input.bool(false, "L2 On", group=groupSR), l2 = input.float(0.0, "L2 Price", group=groupSR)
+l3_on = input.bool(false, "L3 On", group=groupSR), l3 = input.float(0.0, "L3 Price", group=groupSR)
+l4_on = input.bool(false, "L4 On", group=groupSR), l4 = input.float(0.0, "L4 Price", group=groupSR)
+l5_on = input.bool(false, "L5 On", group=groupSR), l5 = input.float(0.0, "L5 Price", group=groupSR)
 l6_on = input.bool(false, "L6 On", group=groupSR), l6 = input.float(0.0, "L6 Price", group=groupSR)
 l7_on = input.bool(false, "L7 On", group=groupSR), l7 = input.float(0.0, "L7 Price", group=groupSR)
 l8_on = input.bool(false, "L8 On", group=groupSR), l8 = input.float(0.0, "L8 Price", group=groupSR)
@@ -106,6 +106,11 @@ if newHTF or barstate.isfirst
 
         sz_fc = array.size(candidates)
         if sz_fc > 0
+            float[] above_p = array.new_float()
+            int[] above_c = array.new_int()
+            float[] below_p = array.new_float()
+            int[] below_c = array.new_int()
+            
             for c = 0 to sz_fc - 1
                 cand_p = array.get(candidates, c)
                 int exact_c = 0
@@ -114,15 +119,27 @@ if newHTF or barstate.isfirst
                         exact_c := exact_c + 1
                 
                 if exact_c >= min_touches
-                    bool dup = false, sz_all = array.size(all_active_sr)
-                    if sz_all > 0
-                        for s = 0 to sz_all - 1
-                            if math.abs(array.get(all_active_sr, s) - cand_p) <= cluster_sense
-                                dup := true
-                                break
-                    if not dup and array.size(all_active_sr) < 30
-                        array.push(all_active_sr, cand_p)
-                        array.push(sr_touches, exact_c)
+                    if cand_p > close
+                        array.push(above_p, cand_p)
+                        array.push(above_c, exact_c)
+                    else
+                        array.push(below_p, cand_p)
+                        array.push(below_c, exact_c)
+            
+            // Sort by touches (descending) and take top 10 from each
+            if array.size(above_c) > 0
+                int[] idx_a = array.sort_indices(above_c, order.descending)
+                for i = 0 to math.min(9, array.size(idx_a) - 1)
+                    ii = array.get(idx_a, i)
+                    array.push(all_active_sr, array.get(above_p, ii))
+                    array.push(sr_touches, array.get(above_c, ii))
+            
+            if array.size(below_c) > 0
+                int[] idx_b = array.sort_indices(below_c, order.descending)
+                for i = 0 to math.min(9, array.size(idx_b) - 1)
+                    ii = array.get(idx_b, i)
+                    array.push(all_active_sr, array.get(below_p, ii))
+                    array.push(sr_touches, array.get(below_c, ii))
 
 // ─────────────────────────────────────────────
 // DEBUG TRACKING

@@ -38,11 +38,11 @@ input double    InpClusterSense = 10.0;         // Clustering Sensitivity (Point
 input double    InpSigTol       = 0.5;          // Signal Touch Tolerance (Ticks)
 
 input group "Manual SR Levels"
-input bool      InpL1On = true;  input double InpL1 = 0.0;
-input bool      InpL2On = true;  input double InpL2 = 0.0;
-input bool      InpL3On = true;  input double InpL3 = 0.0;
-input bool      InpL4On = true;  input double InpL4 = 0.0;
-input bool      InpL5On = true;  input double InpL5 = 0.0;
+input bool      InpL1On = false;  input double InpL1 = 0.0;
+input bool      InpL2On = false;  input double InpL2 = 0.0;
+input bool      InpL3On = false;  input double InpL3 = 0.0;
+input bool      InpL4On = false;  input double InpL4 = 0.0;
+input bool      InpL5On = false;  input double InpL5 = 0.0;
 
 input group "Strategy Settings"
 input double    InpSLTPRatio    = 1.0;          // SL:TP Ratio (e.g. 1.0, 1.5, 2.0)
@@ -137,19 +137,21 @@ void UpdateSRLevels()
         }
     }
     
-    // Auto
+    // Auto Detection
     if(InpAutoOn) {
-        double high[], low[];
-        int copied = CopyHigh(_Symbol, InpSRTF, 0, InpLookback, high);
-        CopyLow(_Symbol, InpSRTF, 0, InpLookback, low);
+        double high_p[], low_p[];
+        int copied = CopyHigh(_Symbol, InpSRTF, 0, InpLookback, high_p);
+        CopyLow(_Symbol, InpSRTF, 0, InpLookback, low_p);
         
         struct Cand { double p; int c; };
         Cand cands[];
         ArrayResize(cands, 0);
         
+        // Phase 1: Cluster potential levels
         for(int i=0; i<copied; i++) {
-            double ps[] = {high[i], low[i]};
+            double ps[] = {high_p[i], low_p[i]};
             for(int j=0; j<2; j++) {
+                if(ps[j] == 0) continue;
                 bool found = false;
                 for(int k=0; k<ArraySize(cands); k++) {
                     if(MathAbs(cands[k].p - ps[j]) <= InpClusterSense * _Point) {
@@ -167,18 +169,64 @@ void UpdateSRLevels()
             }
         }
         
+        // Phase 2: Filter by touches and current price position
+        double current_p = iClose(_Symbol, _Period, 0);
+        Cand above[], below[];
+        ArrayResize(above, 0);
+        ArrayResize(below, 0);
+        
         for(int i=0; i<ArraySize(cands); i++) {
+            // Recount exact touches for these grouped prices
             int exact = CountTouches(cands[i].p);
             if(exact >= InpMinTouches) {
-                bool exists = false;
-                for(int j=0; j<ArraySize(ActiveSR); j++) {
-                    if(MathAbs(ActiveSR[j] - cands[i].p) <= InpClusterSense * _Point) {
-                        exists = true;
-                        break;
-                    }
+                if(cands[i].p > current_p) {
+                    int sz = ArraySize(above);
+                    ArrayResize(above, sz+1);
+                    above[sz].p = cands[i].p;
+                    above[sz].c = exact;
+                } else {
+                    int sz = ArraySize(below);
+                    ArrayResize(below, sz+1);
+                    below[sz].p = cands[i].p;
+                    below[sz].c = exact;
                 }
-                if(!exists) AddSR(cands[i].p, exact);
             }
+        }
+        
+        // Phase 3: Sort by touches (descending)
+        for(int i=0; i<ArraySize(above)-1; i++) {
+            for(int j=i+1; j<ArraySize(above); j++) {
+                if(above[j].c > above[i].c) { Cand tmp = above[i]; above[i] = above[j]; above[j] = tmp; }
+            }
+        }
+        for(int i=0; i<ArraySize(below)-1; i++) {
+            for(int j=i+1; j<ArraySize(below); j++) {
+                if(below[j].c > below[i].c) { Cand tmp = below[i]; below[i] = below[j]; below[j] = tmp; }
+            }
+        }
+        
+        // Phase 4: Greedy selection (Top 10) with proximity check
+        double sense_dist = InpClusterSense * _Point;
+        if(sense_dist <= 0) sense_dist = _Point; // Safety
+        
+        int countB = 0;
+        for(int i=0; i<ArraySize(below); i++) {
+            if(countB >= 10) break;
+            bool skip = false;
+            for(int j=0; j<ArraySize(ActiveSR); j++) {
+                if(MathAbs(ActiveSR[j] - below[i].p) <= sense_dist) { skip = true; break; }
+            }
+            if(!skip) { AddSR(below[i].p, below[i].c); countB++; }
+        }
+        
+        int countA = 0;
+        for(int i=0; i<ArraySize(above); i++) {
+            if(countA >= 10) break;
+            bool skip = false;
+            for(int j=0; j<ArraySize(ActiveSR); j++) {
+                if(MathAbs(ActiveSR[j] - above[i].p) <= sense_dist) { skip = true; break; }
+            }
+            if(!skip) { AddSR(above[i].p, above[i].c); countA++; }
         }
     }
     
@@ -187,12 +235,18 @@ void UpdateSRLevels()
 
 int CountTouches(double price)
 {
-    double high[], low[];
-    int copied = CopyHigh(_Symbol, InpSRTF, 0, InpLookback, high);
-    CopyLow(_Symbol, InpSRTF, 0, InpLookback, low);
+    static double h_buf[], l_buf[];
+    static datetime last_buf_time = 0;
+    if(iTime(_Symbol, InpSRTF, 0) != last_buf_time) {
+        CopyHigh(_Symbol, InpSRTF, 0, InpLookback, h_buf);
+        CopyLow(_Symbol, InpSRTF, 0, InpLookback, l_buf);
+        last_buf_time = iTime(_Symbol, InpSRTF, 0);
+    }
+    
     int count = 0;
-    for(int i=0; i<copied; i++) {
-        if(high[i] >= price && low[i] <= price) count++;
+    int size = ArraySize(h_buf);
+    for(int i=0; i<size; i++) {
+        if(h_buf[i] >= price && l_buf[i] <= price) count++;
     }
     return count;
 }
