@@ -39,8 +39,8 @@ signal_mode  = input.string("After Completed Trades", "Entry Mode", options=["Af
 show_markers = input.bool(true, "Show C/R Markers", group=groupStrat)
 show_boxes   = input.bool(true, "Show SL/TP Debug Boxes", group=groupStrat)
 strat_type   = input.string("Ranging - Reversal", "Signal Strategy Type", options=["Ranging - Reversal", "Trend - Following"], group=groupStrat)
-show_box_labels = input.bool(true, "Show Price Labels on Boxes", group=groupStrat)
-overtime_hrs = input.int(12, "Overtime Force Close (Hours)", minval=1, group=groupStrat)
+show_box_labels = input.bool(false, "Show Price Labels on Boxes", group=groupStrat)
+overtime_hrs = input.int(24, "Overtime Force Close (Hours)", minval=1, group=groupStrat)
 
 // Helper to convert ratio string to float
 get_ratio(r_str) =>
