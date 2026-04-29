@@ -1,0 +1,8 @@
+Name,Total Return (%),Max Drawdown (%),Sharpe Ratio,Profit Factor,Recovery Factor,Win Days (%)
+ENTRY_supportresistance_v3a_followtrend_stop order,10.79,6.06,0.421,1.11,1.75,35.21
+ENTRY_supportresistance_v3a_limitorder_reversal,1.2,12.88,0.044,1.01,0.09,28.12
+ENTRY_supportresistance_v3a_meanreversion_reversal,3.72,6.37,0.127,1.03,0.57,34.04
+ENTRY_supportresistance_v3b_meanreversion_trend,10.8,17.74,0.284,1.07,0.61,34.39
+SEL_Momentum_Basic,6.44,12.75,0.191,1.06,0.5,26.92
+SEL_V7_Maximalist,2.08,13.74,0.072,1.02,0.15,27.14
+SEL_V7_ML_GradientBoost,18.08,9.0,0.856,1.25,1.99,33.39

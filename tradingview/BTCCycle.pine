@@ -1,0 +1,72 @@
+//@version=5
+strategy("Cycle Strategy 376D / 1050D (Final Stable)", 
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=50,
+     initial_capital=10000)
+
+// === INPUT ===
+startYear  = input.int(2010, "Cycle Start Year")
+startMonth = input.int(2, "Cycle Start Month")
+startDay   = input.int(14, "Cycle Start Day")
+
+bearDays = input.int(376, "Bear Cycle Length")
+bullDays = input.int(1050, "Bull Cycle Length")
+
+slPerc = input.float(50.0, "Stop Loss %") / 100
+
+// === TIME CALCULATION ===
+var int startTime = timestamp(startYear, startMonth, startDay, 0, 0)
+
+daysFromStart = int((time - startTime) / 86400000)
+cycleLength = bearDays + bullDays
+cyclePos = daysFromStart % cycleLength
+
+prevDaysFromStart = int((time[1] - startTime) / 86400000)
+prevCyclePos = prevDaysFromStart % cycleLength
+
+isFirstBar = na(prevCyclePos)
+
+// === CYCLE ENTRY (ONCE PER FLIP) ===
+enterLong  = ((cyclePos >= bearDays) and (prevCyclePos < bearDays)) or (isFirstBar and cyclePos >= bearDays)
+enterShort = ((cyclePos < bearDays) and (prevCyclePos >= bearDays)) or (isFirstBar and cyclePos < bearDays)
+
+// === TRACK ENTRY PRICE ===
+var float entryPrice = na
+var bool reversedThisBar = false
+
+// reset flag tiap bar
+reversedThisBar := false
+
+// === ENTRY LOGIC ===
+if strategy.equity > 0
+    if enterLong and strategy.position_size <= 0
+        strategy.close("Short")
+        strategy.entry("Long", strategy.long)
+        entryPrice := close
+
+    if enterShort and strategy.position_size >= 0
+        strategy.close("Long")
+        strategy.entry("Short", strategy.short)
+        entryPrice := close
+
+// === STOP LOSS + AUTO REVERSE (ONCE ONLY) ===
+longSL  = strategy.position_size > 0 and close <= entryPrice * (1 - slPerc)
+shortSL = strategy.position_size < 0 and close >= entryPrice * (1 + slPerc)
+
+if not reversedThisBar and strategy.equity > 0
+    if longSL
+        strategy.close("Long")
+        strategy.entry("Short", strategy.short)
+        entryPrice := close
+        reversedThisBar := true
+
+    if shortSL
+        strategy.close("Short")
+        strategy.entry("Long", strategy.long)
+        entryPrice := close
+        reversedThisBar := true
+
+// === VISUAL ===
+isBull = cyclePos >= bearDays
+bgcolor(isBull ? color.new(color.green, 90) : color.new(color.red, 90))

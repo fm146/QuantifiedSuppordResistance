@@ -1,0 +1,7 @@
+Model,Profit (%),Max DD (%),Sharpe
+DecisionTree,44.66,1.98,2.14
+RandomForest,27.09,1.91,2.064
+GradientBoost,35.04,5.09,1.812
+LogisticReg,30.22,3.94,1.675
+AdaBoost,20.2,3.13,1.652
+SVM,14.96,2.15,1.573

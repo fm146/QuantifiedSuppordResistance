@@ -1,0 +1,2 @@
+Parameter,Total Return (%),Max Drawdown (%),Sharpe Ratio
+"{'max_depth': 5, 'n_estimators': 100, 'learning_rate': 0.05}",170.73491543590364,2.032830744454973,5.370248492793724

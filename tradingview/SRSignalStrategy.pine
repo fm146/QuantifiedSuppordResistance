@@ -1,0 +1,397 @@
+//@version=5
+strategy("SR Signal Strategy", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, pyramiding=10)
+
+// ─────────────────────────────────────────────
+// AUTO-DETECTION SETTINGS
+// ─────────────────────────────────────────────
+groupAuto = "Auto-Detection Logic"
+autoOn       = input.bool(true, "Enable 20 Auto-SR Levels", group=groupAuto)
+sr_tf        = input.timeframe("60", "SR Timeframe", options=["60", "240"], group=groupAuto)
+lookback_htf = input.int(5000, "Scan Lookback (Bars)", minval=50, group=groupAuto)
+min_touches  = input.int(3, "Min Touches Required", minval=2, group=groupAuto)
+cluster_sense = input.float(10.0, "Clustering Sensitivity", minval=0.0, group=groupAuto)
+sig_tol      = input.float(0.5, "Signal Touch Tolerance (Ticks)", minval=0.0, group=groupAuto)
+
+// ─────────────────────────────────────────────
+// MANUAL SR LEVEL SETTINGS
+// ─────────────────────────────────────────────
+groupSR = "Manual Support / Resistance Levels"
+l1_on = input.bool(false, "L1 On", group=groupSR), l1 = input.float(0.0, "L1 Price", group=groupSR)
+l2_on = input.bool(false, "L2 On", group=groupSR), l2 = input.float(0.0, "L2 Price", group=groupSR)
+l3_on = input.bool(false, "L3 On", group=groupSR), l3 = input.float(0.0, "L3 Price", group=groupSR)
+l4_on = input.bool(false, "L4 On", group=groupSR), l4 = input.float(0.0, "L4 Price", group=groupSR)
+l5_on = input.bool(false, "L5 On", group=groupSR), l5 = input.float(0.0, "L5 Price", group=groupSR)
+l6_on = input.bool(false, "L6 On", group=groupSR), l6 = input.float(0.0, "L6 Price", group=groupSR)
+l7_on = input.bool(false, "L7 On", group=groupSR), l7 = input.float(0.0, "L7 Price", group=groupSR)
+l8_on = input.bool(false, "L8 On", group=groupSR), l8 = input.float(0.0, "L8 Price", group=groupSR)
+l9_on = input.bool(false, "L9 On", group=groupSR), l9 = input.float(0.0, "L9 Price", group=groupSR)
+l10_on = input.bool(false, "L10 On", group=groupSR), l10 = input.float(0.0, "L10 Price", group=groupSR)
+
+lineColor = input.color(color.orange, "SR Color")
+lineWidth = input.int(1, "SR Width")
+
+// ─────────────────────────────────────────────
+// STRATEGY SETTINGS
+// ─────────────────────────────────────────────
+groupStrat = "Strategy Settings"
+sl_ratio_str = input.string("1:1", "SL:TP Ratio", options=["1:1", "1:1.2", "1:1.5", "1:1.66", "1:2"], group=groupStrat)
+signal_mode  = input.string("After Completed Trades", "Entry Mode", options=["After Completed Trades", "All Signals"], group=groupStrat)
+show_markers = input.bool(true, "Show C/R Markers", group=groupStrat)
+show_boxes   = input.bool(true, "Show SL/TP Debug Boxes", group=groupStrat)
+strat_type   = input.string("Ranging - Reversal", "Signal Strategy Type", options=["Ranging - Reversal", "Trend - Following"], group=groupStrat)
+show_box_labels = input.bool(false, "Show Price Labels on Boxes", group=groupStrat)
+overtime_hrs = input.int(24, "Overtime Force Close (Hours)", minval=1, group=groupStrat)
+
+// Helper to convert ratio string to float
+get_ratio(r_str) =>
+    switch r_str
+        "1:1"    => 1.0
+        "1:1.2"  => 1.2
+        "1:1.5"  => 1.5
+        "1:1.66" => 1.66
+        "1:2"    => 2.0
+        => 1.0
+
+float ratio_val = get_ratio(sl_ratio_str)
+
+// ─────────────────────────────────────────────
+// GATHER DATA & PROCESS SR (Copied from Indicator)
+// ─────────────────────────────────────────────
+var float[] all_active_sr = array.new_float()
+var int[] sr_touches = array.new_int()
+
+htf_h = request.security(syminfo.tickerid, sr_tf, high, lookahead=barmerge.lookahead_on)
+htf_l = request.security(syminfo.tickerid, sr_tf, low, lookahead=barmerge.lookahead_on)
+
+newHTF = ta.change(time(sr_tf)) != 0
+if newHTF or barstate.isfirst
+    array.clear(all_active_sr)
+    array.clear(sr_touches)
+    
+    // Manual
+    manual_lvls = array.from(l1, l2, l3, l4, l5, l6, l7, l8, l9, l10)
+    manual_ons = array.from(l1_on, l2_on, l3_on, l4_on, l5_on, l6_on, l7_on, l8_on, l9_on, l10_on)
+    for i = 0 to 9
+        m_p = array.get(manual_lvls, i)
+        if array.get(manual_ons, i) and m_p != 0.0
+            int mc = 0
+            for k = 0 to lookback_htf - 1
+                if htf_h[k] >= m_p and htf_l[k] <= m_p
+                    mc := mc + 1
+            array.push(all_active_sr, m_p)
+            array.push(sr_touches, mc)
+
+    // Run Auto Algorithm
+    if autoOn
+        float[] candidates = array.new_float()
+        int[] counts = array.new_int()
+        for i = 0 to lookback_htf - 1
+            h = htf_h[i], l = htf_l[i]
+            if na(h) or na(l)
+                continue
+            
+            ps = array.from(h, l)
+            for p in ps
+                bool found = false
+                szc = array.size(candidates)
+                if szc > 0
+                    for c = 0 to szc - 1
+                        if math.abs(array.get(candidates, c) - p) <= cluster_sense
+                            array.set(counts, c, array.get(counts, c) + 1)
+                            found := true
+                            break
+                if not found
+                    array.push(candidates, p)
+                    array.push(counts, 1)
+
+        sz_fc = array.size(candidates)
+        if sz_fc > 0
+            float[] above_p = array.new_float()
+            int[] above_c = array.new_int()
+            float[] below_p = array.new_float()
+            int[] below_c = array.new_int()
+            
+            for c = 0 to sz_fc - 1
+                cand_p = array.get(candidates, c)
+                int exact_c = 0
+                for k = 0 to lookback_htf - 1
+                    if htf_h[k] >= cand_p and htf_l[k] <= cand_p
+                        exact_c := exact_c + 1
+                
+                if exact_c >= min_touches
+                    if cand_p > close
+                        array.push(above_p, cand_p)
+                        array.push(above_c, exact_c)
+                    else
+                        array.push(below_p, cand_p)
+                        array.push(below_c, exact_c)
+            
+            // Sort by touches (descending) and take top 10 from each
+            if array.size(above_c) > 0
+                int[] idx_a = array.sort_indices(above_c, order.descending)
+                for i = 0 to math.min(9, array.size(idx_a) - 1)
+                    ii = array.get(idx_a, i)
+                    array.push(all_active_sr, array.get(above_p, ii))
+                    array.push(sr_touches, array.get(above_c, ii))
+            
+            if array.size(below_c) > 0
+                int[] idx_b = array.sort_indices(below_c, order.descending)
+                for i = 0 to math.min(9, array.size(idx_b) - 1)
+                    ii = array.get(idx_b, i)
+                    array.push(all_active_sr, array.get(below_p, ii))
+                    array.push(sr_touches, array.get(below_c, ii))
+
+// ─────────────────────────────────────────────
+// DEBUG TRACKING
+// ─────────────────────────────────────────────
+var box[] debug_tp_boxes = array.new_box()
+var box[] debug_sl_boxes = array.new_box()
+var float[] debug_tp_lvls = array.new_float()
+var float[] debug_sl_lvls = array.new_float()
+var bool[] debug_is_long = array.new_bool()
+var bool[] debug_active = array.new_bool()
+var label[] debug_tp_labels = array.new_label()
+var label[] debug_sl_labels = array.new_label()
+var int[] debug_entry_times = array.new_int()
+
+// Update Active Debug Boxes
+if show_boxes and array.size(debug_active) > 0
+    for i = 0 to array.size(debug_active) - 1
+        if array.get(debug_active, i)
+            bx_tp = array.get(debug_tp_boxes, i)
+            bx_sl = array.get(debug_sl_boxes, i)
+            lb_tp = array.get(debug_tp_labels, i)
+            lb_sl = array.get(debug_sl_labels, i)
+            tp_l = array.get(debug_tp_lvls, i)
+            sl_l = array.get(debug_sl_lvls, i)
+            is_l = array.get(debug_is_long, i)
+            
+            box.set_right(bx_tp, bar_index)
+            box.set_right(bx_sl, bar_index)
+            if not na(lb_tp)
+                label.set_x(lb_tp, bar_index)
+            if not na(lb_sl)
+                label.set_x(lb_sl, bar_index)
+                
+            // Check for completion
+            if is_l
+                if high >= tp_l or low <= sl_l
+                    array.set(debug_active, i, false)
+            else
+                if low <= tp_l or high >= sl_l
+                    array.set(debug_active, i, false)
+            
+            // Check for overtime (user input)
+            if (time - array.get(debug_entry_times, i)) >= overtime_hrs * 60 * 60 * 1000
+                array.set(debug_active, i, false)
+
+// ─────────────────────────────────────────────
+// SIGNAL ENGINE
+// ─────────────────────────────────────────────
+sz_engine = array.size(all_active_sr)
+is_red = close < open
+is_green = close > open
+float tol = sig_tol * syminfo.mintick
+
+float focus_sr = na
+float min_dist_wick = 1e10
+bool buy_signal = false
+bool sell_signal = false
+
+if strat_type == "Ranging - Reversal"
+    if sz_engine > 0
+        // 1. First, check if ANY level was strictly CROSSED
+        for i = 0 to sz_engine - 1
+            curr_l = array.get(all_active_sr, i)
+            if (close[1] >= curr_l and close < curr_l) or (close[1] <= curr_l and close > curr_l)
+                focus_sr := curr_l
+                break
+    
+        // 2. Nearest Wick Extreme
+        if na(focus_sr)
+            target_p = is_red ? low : high
+            for i = 0 to sz_engine - 1
+                curr_l = array.get(all_active_sr, i)
+                if high >= curr_l - tol and low <= curr_l + tol
+                    dist = math.abs(target_p - curr_l)
+                    if dist < min_dist_wick
+                        min_dist_wick := dist
+                        focus_sr := curr_l
+    
+    if not na(focus_sr)
+        if close > focus_sr
+            buy_signal := true
+            if show_markers
+                if is_red // Reversal buy
+                    label.new(bar_index, low, "R", style=label.style_none, textcolor=color.green, size=size.small)
+                else // Continuation buy
+                    label.new(bar_index, high, "C", style=label.style_none, textcolor=color.green, size=size.small)
+                
+        if close < focus_sr
+            sell_signal := true
+            if show_markers
+                if is_green // Reversal sell
+                    label.new(bar_index, high, "R", style=label.style_none, textcolor=color.red, size=size.small)
+                else // Continuation sell
+                    label.new(bar_index, low, "C", style=label.style_none, textcolor=color.red, size=size.small)
+
+else if strat_type == "Trend - Following"
+    // Logic for Trend Following to be implemented
+    na
+
+// ─────────────────────────────────────────────
+// STRATEGY EXECUTION
+// ─────────────────────────────────────────────
+// Check if current price is sandwiched between SR levels (above and below)
+bool has_sr_above = false
+bool has_sr_below = false
+if sz_engine > 0
+    for i = 0 to sz_engine - 1
+        lvl = array.get(all_active_sr, i)
+        if lvl > close + tol
+            has_sr_above := true
+        if lvl < close - tol
+            has_sr_below := true
+
+bool in_sr_range = has_sr_above and has_sr_below
+
+// Filter based on selected mode
+bool can_enter = (signal_mode == "All Signals") or (strategy.position_size == 0)
+
+// Capture signals and execute on NEXT BAR OPEN ONLY
+if buy_signal and can_enter and in_sr_range
+    float est_p = close
+    float best_tp_val = na
+    float min_above = 1e10
+    for i = 0 to sz_engine - 1
+        lvl = array.get(all_active_sr, i)
+        if lvl > est_p + (2 * syminfo.mintick)
+            if lvl < min_above
+                min_above := lvl
+                best_tp_val := lvl
+    
+    if not na(best_tp_val)
+        float est_sl = est_p - (best_tp_val - est_p) / ratio_val
+        string comm = "Entry Buy " + str.tostring(est_p, "#.##") + "\nSL : " + str.tostring(est_sl, "#.##") + "\nTP : " + str.tostring(best_tp_val, "#.##")
+        strategy.entry("Long", strategy.long, comment=comm)
+        
+        // DEBUG BOXES
+        if show_boxes
+            btp = box.new(bar_index, best_tp_val, bar_index, est_p, bgcolor=color.new(color.green, 80), border_color=na)
+            bsl = box.new(bar_index, est_p, bar_index, est_sl, bgcolor=color.new(color.red, 80), border_color=na)
+            ltp = show_box_labels ? label.new(bar_index, best_tp_val, "TP: " + str.tostring(best_tp_val, "#.##"), style=label.style_label_left, textcolor=color.white, size=size.small) : na
+            lsl = show_box_labels ? label.new(bar_index, est_sl, "SL: " + str.tostring(est_sl, "#.##"), style=label.style_label_left, textcolor=color.white, size=size.small) : na
+            
+            array.push(debug_tp_boxes, btp)
+            array.push(debug_sl_boxes, bsl)
+            array.push(debug_tp_lvls, best_tp_val)
+            array.push(debug_sl_lvls, est_sl)
+            array.push(debug_is_long, true)
+            array.push(debug_active, true)
+            array.push(debug_tp_labels, ltp)
+            array.push(debug_sl_labels, lsl)
+            array.push(debug_entry_times, time)
+
+if sell_signal and can_enter and in_sr_range
+    float est_p = close
+    float best_tp_val = na
+    float max_below = -1e10
+    for i = 0 to sz_engine - 1
+        lvl = array.get(all_active_sr, i)
+        if lvl < est_p - (2 * syminfo.mintick)
+            if lvl > max_below
+                max_below := lvl
+                best_tp_val := lvl
+    
+    if not na(best_tp_val)
+        float est_sl = est_p + (est_p - best_tp_val) / ratio_val
+        string comm = "Entry Sell " + str.tostring(est_p, "#.##") + "\nSL : " + str.tostring(est_sl, "#.##") + "\nTP : " + str.tostring(best_tp_val, "#.##")
+        strategy.entry("Short", strategy.short, comment=comm)
+
+        // DEBUG BOXES
+        if show_boxes
+            btp = box.new(bar_index, est_p, bar_index, best_tp_val, bgcolor=color.new(color.green, 80), border_color=na)
+            bsl = box.new(bar_index, est_sl, bar_index, est_p, bgcolor=color.new(color.red, 80), border_color=na)
+            ltp = show_box_labels ? label.new(bar_index, best_tp_val, "TP: " + str.tostring(best_tp_val, "#.##"), style=label.style_label_left, textcolor=color.white, size=size.small) : na
+            lsl = show_box_labels ? label.new(bar_index, est_sl, "SL: " + str.tostring(est_sl, "#.##"), style=label.style_label_left, textcolor=color.white, size=size.small) : na
+
+            array.push(debug_tp_boxes, btp)
+            array.push(debug_sl_boxes, bsl)
+            array.push(debug_tp_lvls, best_tp_val)
+            array.push(debug_sl_lvls, est_sl)
+            array.push(debug_is_long, false)
+            array.push(debug_active, true)
+            array.push(debug_tp_labels, ltp)
+            array.push(debug_sl_labels, lsl)
+            array.push(debug_entry_times, time)
+
+// Persistent state for levels
+var float trade_tp = na
+var float trade_sl = na
+
+// On Entry Bar: Calculate TP/SL
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    float entry_p = strategy.position_avg_price
+    float best_tp = na
+    
+    if strategy.position_size > 0 // LONG
+        float min_above = 1e10
+        for i = 0 to array.size(all_active_sr) - 1
+            lvl = array.get(all_active_sr, i)
+            // Use a slightly larger tolerance (2 ticks) to skip the "home" SR
+            if lvl > entry_p + (2 * syminfo.mintick)
+                if lvl < min_above
+                    min_above := lvl
+                    best_tp := lvl
+        
+        if not na(best_tp)
+            trade_tp := best_tp
+            trade_sl := entry_p - (trade_tp - entry_p) / ratio_val
+            strategy.exit("Exit Long", "Long", limit=trade_tp, stop=trade_sl, comment_loss="SL", comment_profit="TP")
+            
+    else // SHORT
+        float max_below = -1e10
+        for i = 0 to array.size(all_active_sr) - 1
+            lvl = array.get(all_active_sr, i)
+            // Skip the SR we are currently on
+            if lvl < entry_p - (2 * syminfo.mintick)
+                if lvl > max_below
+                    max_below := lvl
+                    best_tp := lvl
+        
+        if not na(best_tp)
+            trade_tp := best_tp
+            trade_sl := entry_p + (entry_p - trade_tp) / ratio_val
+            strategy.exit("Exit Short", "Short", limit=trade_tp, stop=trade_sl, comment_loss="SL", comment_profit="TP")
+
+// Force Close after overtime duration
+if strategy.position_size != 0
+    float et = strategy.opentrades.entry_time(0)
+    if not na(et) and (time - et) >= overtime_hrs * 60 * 60 * 1000
+        strategy.close_all(comment="Force Closed - Overtime")
+
+// (The specific box overlay logic for active trades is now handled by the persistent signal boxes above)
+
+// ─────────────────────────────────────────────
+// VISUALS (SR LINES)
+// ─────────────────────────────────────────────
+var line[] r_lines = array.new_line()
+var label[] r_labels = array.new_label()
+
+if barstate.islast
+    for l in r_lines
+        line.delete(l)
+    array.clear(r_lines)
+    for lb in r_labels
+        label.delete(lb)
+    array.clear(r_labels)
+    
+    sz_active = array.size(all_active_sr)
+    if sz_active > 0
+        for i = 0 to sz_active - 1
+            lvl = array.get(all_active_sr, i), t_cnt = array.get(sr_touches, i)
+            ln = line.new(bar_index, lvl, bar_index + 1, lvl, extend=extend.both, color=color.new(lineColor, 40), width=lineWidth, style=line.style_solid)
+            array.push(r_lines, ln)
+            l_text = str.tostring(lvl, "#.##") + " (" + str.tostring(t_cnt) + " touches)"
+            lb = label.new(bar_index + 1, lvl, l_text, style=label.style_none, textcolor=color.white, size=size.small)
+            array.push(r_labels, lb)
